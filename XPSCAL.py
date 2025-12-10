@@ -1,3 +1,4 @@
+#計算用
 import numpy as np
 
 def find_stable_min(x, y):
