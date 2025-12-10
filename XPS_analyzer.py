@@ -51,7 +51,6 @@ try:
         RSF = json.load(f)
     
     # ここでXPSCAL内のatomic_percentが呼ばれます
-    # ※XPSCAL.pyのbaseline関数をShirley法に変えていれば、ここも精度が上がります
     pp = XPSCAL.atomic_percent(x_all=x, y_all=y, tags=tag, rsf_list=RSF)
     
     for i in range(len(tag)):
@@ -131,13 +130,14 @@ if save.lower() == 'y':
         title="保存先を選択してください"
     )
 
-    if save_path:
+if save_path:
         XPSOUTPUTXL.export_to_excel(
             save_path=save_path,
             tags=tag,
             x_list=x,
             y_list=y,
-            fit_results_list=fit_results_list
+            fit_results_list=fit_results_list,
+            atomic_percent=pp
         )
 
 # ==========================================
