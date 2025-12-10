@@ -1,5 +1,8 @@
 #kt31hub
 #1st file
+#These program files were developed for ULVAC-phi's XPS data.
+#RSF.json contains Relative Sensitivity Factors
+#peakfit.json contains data about peak fitting and acts as a switch for the peak fit sequence. So if you don't need it, please delete the text. But don't delete the JSON file!!
 import os
 import sys
 import tkinter as tkinter
