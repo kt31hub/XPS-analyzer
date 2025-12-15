@@ -16,7 +16,7 @@ def load_allspe(path):
     current_tag = "Unknown"
 
     try:
-        with open(path, 'r', encoding='ascii') as f: # エンコーディングを指定
+        with open(path, 'r', encoding='utf-8', errors='replace') as f: # エンコーディングを指定
             reader = csv.reader(f, delimiter=',')
             
             for row in reader:
