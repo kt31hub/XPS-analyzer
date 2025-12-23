@@ -12,3 +12,11 @@ The following Python libraries are required:
 * **scipy**
 * **matplotlib**
 * **openpyxl** (Required for exporting results to Excel)
+
+## Quick start
+1) Install Python3 (suggestion [Python3.13](https://www.python.org/downloads/release/python-31311/))
+2) Install Python libraries
+```console:pip
+pip install numpy pandas scipy matplotlib openpyxl
+```
+3) Edit json files
