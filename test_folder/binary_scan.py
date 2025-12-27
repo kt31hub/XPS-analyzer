@@ -88,7 +88,6 @@ def read_phi_spectrum(file_path):
     all_floats = np.frombuffer(binary_content, dtype=np.float32)
     
     print(f"Total floats found in binary block: {len(all_floats)}")
-    print(all_floats[199])
     # Try to slice the data based on known counts
     # This part requires manual tuning: find where the "real" numbers start.
     # We can filter for reasonable values (e.g., counts > 0).
@@ -99,5 +98,6 @@ def read_phi_spectrum(file_path):
 import tkinter.filedialog as tkfl
 
 path_d=tkfl.askopenfilename()
-read_phi_spectrum(path_d)
+A,B,C=read_phi_spectrum(path_d)
+print(len(C))
 
