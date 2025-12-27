@@ -1,103 +1,143 @@
 import struct
 import numpy as np
-import re
+import matplotlib.pyplot as plt
+import pandas as pd
+import tkinter.filedialog as tkfl
 
-def read_phi_spectrum(file_path):
+def read_phi_spectrum_final(file_path):
     """
-    Parses a PHI XPS file (.spe/.pro) separating Text Header and Binary Data.
+    XPSデータ(.spe)解析の最終修正版
     """
-    # 1. Read the text header first
-    header_lines = []
-    points_per_region = []
+    regions_info = [] 
     binary_start_offset = 0
     
+    # --- 1. テキストヘッダー解析 ---
+    print("--- ヘッダー解析開始 ---")
     with open(file_path, 'rb') as f:
-        # Read line by line until EOFH
         while True:
-            line_bytes = f.readline()
             try:
-                line_str = line_bytes.decode('utf-8').strip()
+                line = f.readline().decode('utf-8', errors='ignore').strip()
             except:
-                # Fallback for latin-1 if utf-8 fails
-                line_str = line_bytes.decode('latin-1').strip()
-            
-            header_lines.append(line_str)
-            
-            # Extract point counts from "SpectralRegDef"
-            # Format example: SpectralRegDef: 1 1 Su1s 111 1356 ...
-            # The 5th element (index 4) is usually the count.
-            if line_str.startswith('SpectralRegDef:'):
-                parts = line_str.split()
-                if len(parts) > 5:
-                    # parts[0] is "SpectralRegDef:", parts[1] is ID...
-                    # We look for the large integer. Based on your file: 
-                    # "1 1 Su1s 111 1356" -> 1356 is the count.
-                    try:
-                        count = int(parts[5]) # Index might vary, let's verify with your data
-                        points_per_region.append(count)
-                    except ValueError:
-                        pass
+                break
 
-            # Stop at EOFH
-            if line_str == 'EOFH':
+            # 行の例: SpectralRegDef: 2 1 C1s 6 201 -0.1000 298.0000 278.0000 ...
+            if line.startswith('SpectralRegDef:'):
+                parts = line.split()
+                if len(parts) > 8:
+                    try:
+                        # ★修正箇所1: インデックスを調整
+                        name = parts[3]           # 3番目が元素名 (Su1s, C1s...)
+                        points = int(parts[5])    # 5番目が点数
+                        start_ev = float(parts[7])# 7番目が開始eV
+                        end_ev = float(parts[8])  # 8番目が終了eV
+                        
+                        regions_info.append({
+                            'name': name,
+                            'points': points,
+                            'start': start_ev,
+                            'end': end_ev
+                        })
+                    except Exception as e:
+                        print(f"ヘッダー読み取りエラー: {e}")
+            
+            if line == 'EOFH':
                 binary_start_offset = f.tell()
                 break
     
-    print(f"Found {len(points_per_region)} regions.")
-    print(f"Points per region: {points_per_region}") # Expecting [1356, 201, 201, 201, 801]
+    # 確認用出力
+    print(f"検出された領域名: {[r['name'] for r in regions_info]}")
 
-    # 2. Parse Binary Data
-    # The binary part is tricky because of the headers (pnt, f4, etc.)
-    # We will read the ENTIRE binary blob and search for the data blocks.
-    
-    data_regions = []
+    # --- 2. バイナリデータ解析 ---
+    parsed_data = {} 
     
     with open(file_path, 'rb') as f:
-        f.seek(binary_start_offset)
-        binary_content = f.read()
-
-        # Strategy: We know we are looking for floats (4 bytes).
-        # We know the exact number of points for each region.
-        # We will scan the binary blob for sequences that match the expected length.
+        content = f.read()
+    
+    current_pos = binary_start_offset
+    
+    # ★修正箇所2: 'f4'ではなく、よりユニークな 'pnt' (point) を目印にする
+    # データ構造は pnt -> sar -> c/s -> f4 -> [DATA] となっているため
+    header_signature = b'pnt' 
+    
+    for info in regions_info:
+        # 'pnt' を探す
+        marker_index = content.find(header_signature, current_pos)
         
-        current_pos = 0
-        for count in points_per_region:
-            needed_bytes = count * 4
+        if marker_index == -1:
+            print(f"Error: {info['name']} の開始マーカー(pnt)が見つかりません。")
+            break
+        
+        print(f"Processing {info['name']} (Points: {info['points']})...")
+        
+        # データ抽出
+        # pntマーカーが見つかった場所から、30バイト～150バイト後ろにデータ本体があるはず
+        # (pnt, sar, c/s, f4 の各ヘッダーブロックを飛び越える)
+        found_y = None
+        
+        # 32バイト後から探索開始 (各ヘッダー4バイト+値4バイト x 4つ = 32バイトが最小構成のため)
+        for offset in range(32, 200, 4): 
+            start_idx = marker_index + offset
+            end_idx = start_idx + (info['points'] * 4)
             
-            # Simple heuristic: The data usually follows a pattern containing 'f4' or similar.
-            # But simpler: The data is likely the largest chunks of valid floats.
-            # Let's try to just find the next valid block after skipping the mini-header.
+            if end_idx > len(content):
+                break
+                
+            chunk = content[start_idx:end_idx]
+            floats = np.frombuffer(chunk, dtype=np.float32)
             
-            # Scan forward to find where the data *might* start.
-            # Usually, PHI binary headers are fixed length (e.g., ~100-300 bytes).
-            # Let's try to brute-force find the data by checking values.
-            # (Note: In a robust app, we would reverse-engineer the 'pnt' header structure,
-            # but for now, let's try reading floats until they make sense or using a known offset).
+            # 妥当性チェック
+            # 1. NaN/Infなし
+            # 2. 平均値が妥当 (0.1 count以上)
+            # 3. 最大値が暴走していない (10^10以下)
+            if not (np.any(np.isnan(floats)) or np.any(np.isinf(floats))):
+                avg = np.mean(np.abs(floats))
+                if 0.1 < avg < 1e10: 
+                    found_y = floats
+                    current_pos = end_idx # 次の検索位置を更新
+                    print(f"  -> データ発見! オフセット: +{offset}, 平均強度: {avg:.1f}")
+                    break
+        
+        if found_y is not None:
+            # X軸作成
+            x_axis = np.linspace(info['start'], info['end'], info['points'])
             
-            # HACK: If we just dump all floats in the file, we might find our data.
-            # Since you are making a tool, strict parsing is better.
-            # PHI Binary Header often ends with distinct bytes.
-            # Let's assume a fixed offset skip for now, or just extract ALL floats and split them.
-            pass
+            df = pd.DataFrame({
+                'Binding Energy (eV)': x_axis,
+                'Intensity (c/s)': found_y
+            })
+            parsed_data[info['name']] = df
+        else:
+            print(f"  -> {info['name']} のデータ本体が見つかりませんでした。")
 
-    # Alternative: "Lazy" extraction
-    # Convert the WHOLE binary part to floats, ignoring alignment errors for a moment.
-    # This often reveals the data because the "Header" text (pnt, c/s) becomes garbage NaN or huge numbers,
-    # while the real data looks like XPS counts (0 to 1,000,000).
+    return parsed_data
+
+# --- 実行 ---
+path_d = tkfl.askopenfilename()
+if path_d:
+    data_dict = read_phi_spectrum_final(path_d)
     
-    all_floats = np.frombuffer(binary_content, dtype=np.float32)
-    
-    print(f"Total floats found in binary block: {len(all_floats)}")
-    # Try to slice the data based on known counts
-    # This part requires manual tuning: find where the "real" numbers start.
-    # We can filter for reasonable values (e.g., counts > 0).
-    
-    return header_lines, points_per_region, all_floats
+    # 取得できたキーを表示
+    print("\n利用可能なデータ:", data_dict.keys())
 
-#デバック
-import tkinter.filedialog as tkfl
-
-path_d=tkfl.askopenfilename()
-A,B,C=read_phi_spectrum(path_d)
-print(len(C))
-
+    # C1sがあれば表示
+    target = 'C1s'
+    if target in data_dict:
+        df = data_dict[target]
+        
+        plt.figure(figsize=(8, 5))
+        plt.plot(df['Binding Energy (eV)'], df['Intensity (c/s)'])
+        plt.title(f"XPS Spectrum: {target}")
+        plt.xlabel("Binding Energy (eV)")
+        plt.ylabel("Intensity (counts/s)")
+        plt.gca().invert_xaxis() # 軸反転
+        plt.grid(True)
+        plt.show()
+    elif len(data_dict) > 0:
+        # C1sがなくても、とりあえず最初のデータを表示
+        first_key = list(data_dict.keys())[0]
+        print(f"{target} がないため、代わりに {first_key} を表示します。")
+        df = data_dict[first_key]
+        plt.plot(df['Binding Energy (eV)'], df['Intensity (c/s)'])
+        plt.title(f"{first_key}")
+        plt.gca().invert_xaxis()
+        plt.show()
