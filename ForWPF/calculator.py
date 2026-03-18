@@ -279,3 +279,32 @@ def Get_Corrected_RSF_List(tags, x_all, y_all, bg_all, photon_energy=1486.6, t_e
         
     return corrected_rsf_list
 
+def Atom_per(tags, x_after, y_after, bg_all, corrected_rsf_list):
+    """
+    各ピークの面積と補正RSFから原子比率(Atomic %)を計算する
+    """
+    ap_tags = []      # 定量対象の元素名
+    relative_ints = [] # Area / RSF の値（相対強度）
+
+    # 1. 各要素の相対強度を計算
+    for i in range(len(tags)):
+        # RSFが0より大きい（定量対象）かつ名前がSurveyでない場合
+        if corrected_rsf_list[i] > 0 and "Su" not in tags[i]:
+            # Area関数を呼び出して面積を取得
+            # (引数: x, y, baseline, x_min, x_max)
+            # ※shirley_baselineで決まったx_min, x_maxを使う想定
+            area_val = Area(x_after[i], y_after[i], bg_all[i], min(x_after[i]), max(x_after[i]))
+            
+            ap_tags.append(tags[i])
+            relative_ints.append(area_val / corrected_rsf_list[i])
+
+    # 2. 合計値で割ってパーセント(%)に変換
+    total_int = sum(relative_ints)
+    atom_percentages = []
+    
+    if total_int > 0:
+        atom_percentages = [(val / total_int) * 100 for val in relative_ints]
+    else:
+        atom_percentages = [0.0] * len(relative_ints)
+
+    return ap_tags, atom_percentages
