@@ -19,7 +19,8 @@ def initialize_settings():
             "shift_flag_level": "C1s",
             "shift_flag_energy": 284.4,
             "shift_Xmax": 290,
-            "shift_Xmin": 280
+            "shift_Xmin": 280,
+            "Excel_out":False
         }
         with open(settings_file, 'w', encoding='utf-8') as f:
             json.dump(initial_data, f, ensure_ascii=False, indent=4)

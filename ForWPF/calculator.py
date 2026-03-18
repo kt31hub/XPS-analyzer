@@ -160,3 +160,68 @@ def shirley_baseline(x_list, y_list, x_min=-1.0, x_max=-1.0,
 
     # ★ 最後に numpy.ndarray を標準の list に変換して返す
     return y_base_full.tolist(), x_min, x_max
+
+def Aria(x, y, baseline_y, x_min, x_max):
+    """
+    指定範囲内のピーク面積 (y - baseline_y) をシンプソン法で計算する関数
+    ※ Numpy不使用
+    """
+    # XPSは結合エネルギーが降順(左が大きい)の場合があるため、大小を整理
+    lower_bound = min(x_min, x_max)
+    upper_bound = max(x_min, x_max)
+    
+    x_f = []
+    f_val = []
+    
+    # 1. 指定範囲内のデータを抽出し、正味の強度（y - baseline_y）を計算
+    for i in range(len(x)):
+        if lower_bound <= x[i] <= upper_bound:
+            x_f.append(x[i])
+            
+            # バックグラウンドを引いた正味の強度（Net Intensity）
+            net_y = y[i] - baseline_y[i]
+            
+            # ノイズでベースラインを下回った（マイナスになった）場合は0とみなす
+            f_val.append(max(0.0, net_y))
+            
+    n = len(x_f)
+    
+    # 面積を計算できない場合
+    if n < 2:
+        print(f"Error: 指定範囲 ({x_min}-{x_max} eV) 内に十分なデータがありません。")
+        return 0.0
+
+    # X軸の刻み幅 (等間隔であることを前提)
+    dx = abs(x_f[1] - x_f[0])
+    area = 0.0
+    
+    # 2. 面積の計算
+    if n == 2:
+        # データが2点しかない場合は台形積分
+        area = (f_val[0] + f_val[1]) * dx / 2.0
+    else:
+        # --- シンプソン積分 ---
+        # シンプソン法はデータ数が奇数(区間数が偶数)のときのみ適用可能
+        is_even_intervals = (n % 2 != 0)
+        
+        # シンプソン法を適用する範囲の限界（奇数個のデータポイントまで）
+        limit = n if is_even_intervals else n - 1
+        
+        # シンプソン法の公式: (dx / 3) * (f[0] + 4*f[1] + 2*f[2] + ... + f[n-1])
+        s = f_val[0] + f_val[limit - 1]
+        for i in range(1, limit - 1):
+            if i % 2 == 1:
+                s += 4.0 * f_val[i]  # 奇数番目は4倍
+            else:
+                s += 2.0 * f_val[i]  # 偶数番目は2倍
+                
+        area = s * dx / 3.0
+        
+        # もしデータ数 n が偶数（区間数が奇数）だった場合、
+        # はみ出た最後の1区間だけ「台形積分」で計算して足す
+        if not is_even_intervals:
+            last_trapz = (f_val[-2] + f_val[-1]) * dx / 2.0
+            area += last_trapz
+            
+    return area
+
