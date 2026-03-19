@@ -228,10 +228,14 @@ def Area(x, y, baseline_y, x_min, x_max):
 import json
 from pathlib import Path
 
-def Get_Corrected_RSF_List(tags, x_all, y_all, bg_all, photon_energy=1486.6, t_exp=-1.0, l_exp=0.5):
+import json
+from pathlib import Path
+
+def Get_Corrected_RSF_List(tags, x_all, y_all, bg_all, header_json_path=None, photon_energy=1486.6, t_exp=-1.0, l_exp=0.5):
     """
-    ドキュメントフォルダ内のRSF.jsonを読み込み、各Regionのピーク位置に基づいた
-    補正済みRSFのリストを一括で返す統合関数
+    ドキュメントフォルダ内のRSF.jsonを読み込み、補正済みRSFのリストを返す。
+    ※ヘッダーJSONが渡された場合、Sweeps(スキャン回数)とTime/Stepを抽出し、
+      Area(Total Counts)との辻褄を合わせるための実効RSFを計算する。
     """
     # 1. パスの自動決定 (Documents/XPSAST/RSF.json)
     rsf_json_path = Path.home() / "Documents" / "XPSAST" / "RSF.json"
@@ -245,9 +249,40 @@ def Get_Corrected_RSF_List(tags, x_all, y_all, bg_all, photon_energy=1486.6, t_e
     else:
         print(f"Warning: RSF file not found at {rsf_json_path}")
 
+    # --- 3. JSONヘッダーから Sweeps と Time/Step を抽出 ---
+    sweeps_dict = {}
+    time_dict = {}
+    
+    if header_json_path and Path(header_json_path).exists():
+        with open(header_json_path, 'r', encoding='utf-8') as f:
+            header_data = json.load(f)
+            
+            reg_def = header_data.get("SpectralRegDef", [])
+            reg_def2 = header_data.get("SpectralRegDef2", [])
+            
+            # Region ID をキーにして Tag 名を紐付ける
+            id_to_tag = {}
+            for line in reg_def:
+                parts = line.split()
+                if len(parts) >= 4:
+                    reg_id = parts[0]       # "1", "2", "3"...
+                    tag_name = parts[2]     # "C1s", "O1s"...
+                    sweeps = float(parts[3]) # スキャン回数
+                    id_to_tag[reg_id] = tag_name
+                    sweeps_dict[tag_name] = sweeps
+                    
+            for line in reg_def2:
+                parts = line.split()
+                if len(parts) >= 2:
+                    reg_id = parts[0]
+                    time_ms = float(parts[1]) # ミリ秒
+                    if reg_id in id_to_tag:
+                        tag_name = id_to_tag[reg_id]
+                        time_dict[tag_name] = time_ms / 1000.0 # 秒に変換
+
     corrected_rsf_list = []
     
-    # 3. 各タグ（Region）ごとに計算を回す
+    # 4. 各タグ（Region）ごとに計算を回す
     for i in range(len(tags)):
         tag = tags[i]
         base_rsf = rsf_dict.get(tag, 1.0) # 見つからない場合は1.0
@@ -258,7 +293,6 @@ def Get_Corrected_RSF_List(tags, x_all, y_all, bg_all, photon_energy=1486.6, t_e
             continue
 
         # --- ピーク位置(BE)の特定 ---
-        # Net強度(y - baseline)が最大のx座標を探す
         max_net_y = -float('inf')
         peak_be = x_all[i][0]
         for x_val, y_val, b_val in zip(x_all[i], y_all[i], bg_all[i]):
@@ -275,7 +309,14 @@ def Get_Corrected_RSF_List(tags, x_all, y_all, bg_all, photon_energy=1486.6, t_e
         else:
             c_rsf = base_rsf
             
-        corrected_rsf_list.append(c_rsf)
+        # --- Area計算との相殺補正 (ここがキモ) ---
+        sweeps = sweeps_dict.get(tag, 1.0)
+        time_s = time_dict.get(tag, 1.0)
+        
+        # Area関数がいじられない前提なので、RSF側にSweepsとTimeを掛けて「実効RSF」とする
+        effective_rsf = c_rsf * sweeps * time_s
+        
+        corrected_rsf_list.append(effective_rsf)
         
     return corrected_rsf_list
 

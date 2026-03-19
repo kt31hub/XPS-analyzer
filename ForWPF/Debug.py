@@ -1,98 +1,81 @@
-import json
-import tkinter as tk
-import tkinter.filedialog as tkfl
-import matplotlib.pyplot as plt
-from pathlib import Path
-
-# これまで作成した自作モジュールを読み込み
-import initialsettings
 import convert
 import calculator
+import initialsettings
+import tkinter as tk
+import tkinter.filedialog as tkfd
+from pathlib import Path
 
-def main():
-    # =========================================
-    # 1. 設定ファイルの確認と読み込み
-    # =========================================
+def run_debug_pipeline():
+    print("=== XPSAST Debug Pipeline (To Atom%) ===")
+    
+    # 1. 初期設定の確認 (settings.jsonの生成/確認)
     initialsettings.initialize_settings()
-    
-    settings_file = Path.home() / "Documents" / "XPSAST" / "settings.json"
-    with open(settings_file, 'r', encoding='utf-8') as f:
-        settings = json.load(f)
 
-    # =========================================
-    # 2. SPEファイルの選択とデータ読み込み
-    # =========================================
+    # 2. テスト用ファイルの選択
     root = tk.Tk()
-    root.withdraw() # 不要なウィンドウを隠す
-    
-    input_file = tkfl.askopenfilename(
-        title="解析する SPE ファイルを選択してください",
-        filetypes=[("SPE Files", "*.spe"), ("All Files", "*.*")]
+    root.withdraw()
+    filepath = tkfd.askopenfilename(
+        title="テスト用のXPSデータを選択してください (.spe または .csv)",
+        filetypes=[("SPE Files", "*.spe"), ("CSV Files", "*.csv"), ("All Files", "*.*")]
     )
-    
-    if not input_file:
-        print("ファイル選択がキャンセルされました。")
-        return
 
-    output_json = input_file.replace('.spe', '_header.json')
-    
-    # データの抽出 (タグ, X軸リスト, Y軸リスト)
-    tags, x_raw, y_raw = convert.ReadSpeAndExportHeader(input_file, output_json)
+    if not filepath:
+        print("ファイルが選択されませんでした。デバッグを終了します。")
+        return None, None
+
+    file_path_obj = Path(filepath)
+    print(f"\n[1/5] データの読み込み: {file_path_obj.name}")
+
+    # 拡張子によって読み込み関数を切り替え
+    if file_path_obj.suffix.lower() == '.spe':
+        json_out = file_path_obj.with_suffix('.json')
+        tags, x_all, y_all = convert.ReadSpeAndExportHeader(filepath, str(json_out))
+    else:
+        tags, x_all, y_all = convert.InterFromCSV(filepath)
 
     if not tags:
-        print("データの読み込みに失敗しました。")
-        return
+        print("エラー: データの読み込みに失敗しました。")
+        return None, None
 
-    # =========================================
-    # 3. 帯電補正 (シフト計算)
-    # =========================================
-    # 設定ファイルから補正パラメータを取得
-    shift_standard = settings.get("shift_flag_energy", 284.4)
-    shift_min = settings.get("shift_Xmin", 280)
-    shift_max = settings.get("shift_Xmax", 290)
+    # 3. 帯電補正 (C1s Shift)
+    print("\n[2/5] 帯電補正 (C1s Shift) を実行中...")
+    x_shifted, y_shifted = calculator.Shift(tags, x_all, y_all)
 
-    # 補正の実行（アップロードしてもらった calculator.py の Shift を使用）
-    x_shifted, y_shifted = calculator.Shift(
-        tags=tags, 
-        x_before=x_raw, 
-        y_before=y_raw, 
-        x_min=shift_min, 
-        x_max=shift_max, 
-        standard=shift_standard
-    )
-
-    # =========================================
-    # 4. 各レベルごとの Shirley BG 計算とプロット
-    # =========================================
+    # 4. Shirleyバックグラウンド計算
+    print("\n[3/5] バックグラウンド計算 (Shirley法) を実行中...")
+    bg_all = []
     for i in range(len(tags)):
-        tag = tags[i]
-        x_data = x_shifted[i]
-        y_data = y_shifted[i]
-        
-        # Shirleyバックグラウンド計算
-        bg_data, x_min_bg, x_max_bg = calculator.shirley_baseline(x_data, y_data)
-        
-        # グラフの作成
-        plt.figure(figsize=(8, 6))
-        
-        # プロット (元のスペクトル と Shirley BG)
-        plt.plot(x_data, y_data, label=f"Spectrum ({tag})", color='blue')
-        plt.plot(x_data, bg_data, label="Shirley BG", color='red', linestyle='--')
-        
-        plt.title(f"XPS Spectrum & Shirley Baseline: {tag}")
-        plt.xlabel("Binding Energy (eV)")
-        plt.ylabel("Intensity (c/s)")
-        
-        # ★重要: XPSの慣例に従い、X軸（結合エネルギー）を左から右へ小さくなるように反転
-        plt.gca().invert_xaxis()
-        
-        plt.legend()
-        plt.grid(True, linestyle=':', alpha=0.7)
-        
-        # グラフを表示（ウィンドウの「×」を閉じると、次のタグのグラフが表示されます）
-        plt.show()
+        print(f"  - {tags[i]} のベースラインを計算中...")
+        # 自動範囲設定を利用
+        bg, x_min, x_max = calculator.shirley_baseline(x_shifted[i], y_shifted[i])
+        bg_all.append(bg)
 
-    print("すべてのグラフの表示が完了しました！")
+    # 5. 補正RSFの取得
+    # ※ Documents/XPSAST/RSF.json が存在し、フォーマットが正しいことが前提です
+    print("\n[4/5] 補正RSFリストを取得中...")
+    corrected_rsf_list = calculator.Get_Corrected_RSF_List(tags, x_shifted, y_shifted, bg_all)
+    for tag, rsf in zip(tags, corrected_rsf_list):
+         print(f"  - {tag}: 補正RSF = {rsf:.4f}")
+
+    # 6. Atom% (原子濃度) の計算
+    print("\n[5/5] Atom% の計算を実行中...")
+    ap_tags, atom_percentages = calculator.Atom_per(tags, x_shifted, y_shifted, bg_all, corrected_rsf_list)
+
+    # 結果の出力
+    print("\n===============================")
+    print("      定量結果 (Atomic %)")
+    print("===============================")
+    for tag, percent in zip(ap_tags, atom_percentages):
+        print(f" {tag:>6} : {percent:>6.2f} %")
+    print("===============================\n")
+
+    # 型の最終確認 (C#用)
+    print(f"型の確認: ap_tags is {type(ap_tags)}, atom_percentages is {type(atom_percentages)}")
+    if len(atom_percentages) > 0:
+        print(f"要素の型確認: atom_percentages[0] is {type(atom_percentages[0])}")
+
+    # C#へ返す想定のリストをリターン
+    return ap_tags, atom_percentages
 
 if __name__ == "__main__":
-    main()
+    result_tags, result_percents = run_debug_pipeline()
