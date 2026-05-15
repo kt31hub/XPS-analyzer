@@ -228,9 +228,6 @@ def Area(x, y, baseline_y, x_min, x_max):
 import json
 from pathlib import Path
 
-import json
-from pathlib import Path
-
 def Get_Corrected_RSF_List(tags, x_all, y_all, bg_all, header_json_path=None, photon_energy=1486.6, t_exp=-1.0, l_exp=0.5):
     """
     ドキュメントフォルダ内のRSF.jsonを読み込み、補正済みRSFのリストを返す。
